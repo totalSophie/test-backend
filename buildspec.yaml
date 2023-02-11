@@ -1,45 +1,31 @@
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  labels:
-    app: test-backend
-  name: test-backend
-  namespace: backend
-spec:
-  selector:
-    matchLabels:
-      app: test-backend
-  template:
-    metadata:
-      labels:
-        app: test-backend
-    spec:
-      containers:
-      - name: test-backend
-        image: 437319709631.dkr.ecr.us-east-1.amazonaws.com/test-backend:latest
-        ports:
-        - containerPort: 8080
-        imagePullPolicy: Always
-        env:
-        - name: SPRING_DATASOURCE_URL
-          value: jdbc:mysql://test-deployment-db.cfaapgkmyph8.us-east-1.rds.amazonaws.com:3306/hobbie_backend_db?allowPublicKeyRetrieval=true&useSSL=true&serverTimezone=Europe/Paris
-        - name: SPRING_DATASOURCE_USERNAME
-          value: test-db-user
-        - name: SPRING_DATASOURCE_PASSWORD
-          value: Password1
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: test-backend-service
-  namespace: backend
-  labels:
-    run: test-backend-service
-spec:
-  type: ClusterIP
-  ports:
-  - name: test-backend-port
-    port: 8080
-    protocol: TCP
-  selector:
-    app: test-backend 
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto11
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - COMMIT_ID=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -b -8)
+  build:
+    commands:
+      - echo Building maven app started on `date`
+      - mvn -DskipTests clean package
+      - echo Building the Docker image...          
+      - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:test-$COMMIT_ID
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image...
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:test-$COMMIT_ID
+      - echo "Update Kube Config"      
+      - aws eks update-kubeconfig --name test-deployment-eks
+      - echo "Apply changes to kube manifests"
+      - kubectl -n backend set image deployment/test-backend test-backend=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:test-$COMMIT_ID
+artifacts:
+  files:
+    - target/*.jar
+  discard-paths: yes
