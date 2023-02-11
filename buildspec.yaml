@@ -42,4 +42,4 @@ spec:
     port: 8080
     protocol: TCP
   selector:
-    app: test-backend
+    app: test-backend 
